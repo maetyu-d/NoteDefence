@@ -732,6 +732,54 @@ private:
         addSupportLead(rootFreq * 3.0, 0.32, gain * 0.08, 0.32, true);
     }
 
+    void addRezPushReleaseMelody(double freq, bool accent, bool final, int amount, double morph) {
+        int barStep = currentBeatStep_ % 8;
+        bool pushSection = barStep < 6 && !final;
+        bool releaseSection = barStep >= 6 || final;
+        double nextWeight = juce::jlimit(0.0, 1.0, morph);
+        double panBias = accent ? 0.14 : -0.1;
+
+        static const std::array<int, 8> pushIntervals{{0, 7, 12, 14, 19, 21, 24, 26}};
+        static const std::array<int, 8> releaseIntervals{{12, 7, 4, 0, 9, 7, 4, 0}};
+        int primaryInterval = pushSection ? pushIntervals[static_cast<size_t>(barStep)] : releaseIntervals[static_cast<size_t>(barStep)];
+        int colorInterval = pushSection ? (barStep % 2 == 0 ? 19 : 14) : (barStep % 2 == 0 ? 7 : 4);
+        int resolutionInterval = releaseSection ? 0 : 12;
+
+        double primaryFreq = freq * semitoneRatio(primaryInterval);
+        double colorFreq = freq * semitoneRatio(colorInterval);
+        double resolutionFreq = freq * semitoneRatio(resolutionInterval);
+
+        addRezLead(primaryFreq,
+                   final ? 0.68 : (accent ? 0.5 : 0.34),
+                   final ? 0.27 : (accent ? 0.2 : 0.15),
+                   accent || pushSection,
+                   final,
+                   panBias);
+        addSupportLead(colorFreq,
+                       releaseSection ? 0.32 : 0.24,
+                       (releaseSection ? 0.082 : 0.062) + nextWeight * 0.018,
+                       -0.24,
+                       true);
+        addSupportLead(resolutionFreq * 2.0,
+                       releaseSection ? 0.28 : 0.2,
+                       releaseSection ? 0.072 : 0.048,
+                       0.24,
+                       true);
+
+        if (pushSection) {
+            addRezLead(freq * semitoneRatio(24 + (barStep % 3) * 2), 0.16, 0.055 + amount * 0.002, false, false, 0.28);
+        }
+
+        if (releaseSection || amount >= 6) {
+            addRezLead(freq * semitoneRatio(releaseSection ? 7 : 19), 0.22, 0.07, false, false, -0.3);
+        }
+
+        if (final) {
+            addRezLead(freq * semitoneRatio(12), 0.26, 0.09, true, true, 0.0);
+            addSupportLead(freq * semitoneRatio(24), 0.34, 0.08, 0.18, true);
+        }
+    }
+
     void addKillMelody(double freq, VisualStyle style, bool accent, bool final, int amount, double morph) {
         double nextWeight = juce::jlimit(0.0, 1.0, morph);
         double panBias = accent ? 0.12 : -0.08;
@@ -751,11 +799,53 @@ private:
             return;
         }
 
-        addRezLead(freq, final ? 0.62 : (accent ? 0.42 : 0.28), final ? 0.24 : (accent ? 0.18 : 0.14), accent, final, panBias);
-        addSupportLead(freq * semitoneRatio(7), 0.28, 0.075 + nextWeight * 0.015, -0.24, true);
-        addSupportLead(freq * 2.0, accent ? 0.34 : 0.22, accent ? 0.09 : 0.06, 0.24, true);
-        if (accent || final) addRezLead(freq * semitoneRatio(12), 0.22, 0.08, false, false, -0.28);
-        if (amount >= 6 || final) addRezLead(freq * semitoneRatio(19), 0.18, 0.06, false, false, 0.3);
+        addRezPushReleaseMelody(freq, accent, final, amount, morph);
+    }
+
+    void rememberMelodyNote(double freq, bool accent) {
+        recentMelody_.push_back(freq);
+        if (recentMelody_.size() > 12) recentMelody_.pop_front();
+        melodicEnergy_ = std::min(1.0, melodicEnergy_ + (accent ? 0.34 : 0.18));
+    }
+
+    double recentMelodyNoteForStep(int step) const {
+        if (recentMelody_.empty()) return 0.0;
+        size_t size = recentMelody_.size();
+        size_t idx = (size - 1) - (static_cast<size_t>(step) % size);
+        return recentMelody_[idx];
+    }
+
+    void renderAdaptiveResponse(VisualStyle style, int step, double weight) {
+        if (weight <= 0.001 || recentMelody_.empty()) return;
+        double responseWeight = weight * melodicEnergy_;
+        if (responseWeight <= 0.01) return;
+
+        double baseFreq = recentMelodyNoteForStep(step);
+        if (baseFreq <= 0.0) return;
+
+        if (style == VisualStyle::Invaders) {
+            if (step == 3 || step == 7) {
+                addSupportLead(baseFreq * semitoneRatio(step == 3 ? 12 : 7), 0.14, 0.026 * responseWeight, -0.14, false);
+            }
+            return;
+        }
+
+        if (style == VisualStyle::Tempest) {
+            if (step == 1 || step == 5) {
+                addSupportLead(baseFreq * semitoneRatio(7), 0.18, 0.038 * responseWeight, -0.2, true);
+            }
+            if (step == 3 || step == 7) {
+                addRezLead(baseFreq * semitoneRatio(12), 0.16, 0.045 * responseWeight, true, false, 0.18);
+            }
+            return;
+        }
+
+        if (step == 1 || step == 5) {
+            addSupportLead(baseFreq * semitoneRatio(7), 0.24, 0.048 * responseWeight, -0.22, true);
+        }
+        if (step == 3 || step == 7) {
+            addRezLead(baseFreq * semitoneRatio(step == 3 ? 12 : 19), 0.18, 0.058 * responseWeight, true, false, 0.2);
+        }
     }
 
     void renderBeatLayer(VisualStyle style, int step, double weight) {
@@ -789,10 +879,16 @@ private:
     }
 
     void handleBeatStep(const AudioEvent& event) {
+        currentBeatStep_ = event.step;
         double nextWeight = juce::jlimit(0.0, 1.0, event.morph);
         double currentWeight = 1.0 - nextWeight;
         renderBeatLayer(event.style, event.step, currentWeight);
-        if (event.altStyle != event.style) renderBeatLayer(event.altStyle, event.step, nextWeight);
+        renderAdaptiveResponse(event.style, event.step, currentWeight);
+        if (event.altStyle != event.style) {
+            renderBeatLayer(event.altStyle, event.step, nextWeight);
+            renderAdaptiveResponse(event.altStyle, event.step, nextWeight);
+        }
+        melodicEnergy_ *= 0.965;
     }
 
     void handleEvent(const AudioEvent& event) {
@@ -802,8 +898,11 @@ private:
                 delayLeft_.assign(delayLength_, 0.0f);
                 delayRight_.assign(delayLength_, 0.0f);
                 delayIndex_ = 0;
+                recentMelody_.clear();
+                melodicEnergy_ = 0.0;
                 break;
             case AudioEventType::NoteHit:
+                rememberMelodyNote(event.freq, event.accent);
                 addKillMelody(event.freq, event.style, event.accent, false, std::max(1, event.amount), event.morph);
                 break;
             case AudioEventType::WrongPress:
@@ -816,6 +915,7 @@ private:
                 handleBeatStep(event);
                 break;
             case AudioEventType::ChainStep:
+                rememberMelodyNote(event.freq, event.accent || event.final);
                 addKillMelody(event.freq, event.style, event.accent, event.final, event.amount, event.morph);
                 if (event.final && event.amount >= 4) {
                     VisualStyle chordStyle = event.morph >= 0.5 ? event.altStyle : event.style;
@@ -837,6 +937,9 @@ private:
     std::deque<AudioEvent> pendingEvents_;
     std::vector<Voice> voices_;
     std::mt19937 rng_{std::random_device{}()};
+    std::deque<double> recentMelody_;
+    double melodicEnergy_ = 0.0;
+    int currentBeatStep_ = 0;
     double sampleRate_ = 48000.0;
     size_t delayLength_ = 48000;
     size_t delayIndex_ = 0;
@@ -912,9 +1015,9 @@ public:
         ScaleState scaleState = currentScale();
         state_.visualStyle = scaleState.style;
         if (previousStyle != state_.visualStyle) {
-            state_.levelFlash = 1.0;
+            state_.levelFlash = 1.35;
         }
-        state_.levelFlash = std::max(0.0, state_.levelFlash - dt * 1.8);
+        state_.levelFlash = std::max(0.0, state_.levelFlash - dt * 1.15);
 
         state_.spawnTimer += dt;
         while (state_.spawnTimer >= state_.spawnInterval) {
@@ -1071,7 +1174,7 @@ private:
     }
 
     TransitionState transitionStateForElapsed(double elapsed) const {
-        constexpr double kTransitionDuration = 5.25;
+        constexpr double kTransitionDuration = 8.0;
         constexpr double kHalfWindow = kTransitionDuration * 0.5;
         const double boundary1 = kLevelDefinitions[0].duration;
         const double boundary2 = kLevelDefinitions[0].duration + kLevelDefinitions[1].duration;
@@ -1505,17 +1608,18 @@ void drawLinearGradient(CGContextRef ctx, Vec2 a, Vec2 b, Color start, Color end
     CGColorSpaceRelease(colorSpace);
 }
 
-CGSize optimizedSceneSizeForDrawableSize(CGSize drawableSize) {
+CGSize optimizedSceneSizeForDrawableSize(CGSize drawableSize, double quality) {
     double width = std::max(1.0, drawableSize.width);
     double height = std::max(1.0, drawableSize.height);
 
+    quality = std::clamp(quality, 0.55, 1.0);
     constexpr double kTargetPixels = 512.0 * 288.0;
-    constexpr double kMinWidth = 480.0;
-    constexpr double kMinHeight = 270.0;
+    constexpr double kMinWidth = 384.0;
+    constexpr double kMinHeight = 216.0;
     constexpr double kMaxScale = 0.45;
 
     double pixelCount = width * height;
-    double scale = std::min(kMaxScale, std::sqrt(kTargetPixels / pixelCount));
+    double scale = std::min(kMaxScale, std::sqrt((kTargetPixels * quality) / pixelCount));
     if (!std::isfinite(scale) || scale <= 0.0) scale = 0.35;
 
     double scaledWidth = std::max(kMinWidth, std::round(width * scale));
@@ -1540,6 +1644,7 @@ struct PostFXUniforms {
     float aberration;
     float distortion;
     float beatPulse;
+    float quality;
 };
 
 vertex VertexOut postFXVertex(uint vertexID [[vertex_id]]) {
@@ -1610,11 +1715,12 @@ fragment float4 postFXFragment(VertexOut in [[stage_in]],
     float pulse = clamp(u.beatPulse, 0.0, 1.8);
 
     float3 bloom = float3(0.0);
-    const int sampleCount = 8;
+    int sampleCount = u.quality < 0.72 ? 5 : 8;
+    int ringCount = u.quality < 0.72 ? 2 : 3;
     for (int i = 0; i < sampleCount; ++i) {
         float angle = 6.2831853 * (float(i) / float(sampleCount));
         float2 offsetDir = float2(cos(angle), sin(angle));
-        for (int ring = 1; ring <= 3; ++ring) {
+        for (int ring = 1; ring <= ringCount; ++ring) {
             float ringScale = float(ring) * (1.0 + radius * 2.7 + pulse * 1.45);
             float2 sampleUV = clamp(distortedUV + offsetDir * texel * ringScale, float2(0.0), float2(1.0));
             float3 sampleColor = sourceTexture.sample(texSampler, sampleUV).rgb;
@@ -1689,6 +1795,8 @@ fragment float4 postFXFragment(VertexOut in [[stage_in]],
     size_t _sceneHeight;
     size_t _sceneBytesPerRow;
     CFTimeInterval _lastTime;
+    double _adaptiveQuality;
+    double _smoothedFrameTime;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame {
@@ -1714,6 +1822,8 @@ fragment float4 postFXFragment(VertexOut in [[stage_in]],
         _overlayView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
         [self addSubview:_overlayView];
         _lastTime = CACurrentMediaTime();
+        _adaptiveQuality = 1.0;
+        _smoothedFrameTime = 1.0 / 60.0;
     }
     return self;
 }
@@ -1746,7 +1856,7 @@ fragment float4 postFXFragment(VertexOut in [[stage_in]],
 }
 
 - (void)ensureSceneResourcesForDrawableSize:(CGSize)drawableSize {
-    CGSize optimizedSize = optimizedSceneSizeForDrawableSize(drawableSize);
+    CGSize optimizedSize = optimizedSceneSizeForDrawableSize(drawableSize, _adaptiveQuality);
     size_t width = std::max<size_t>(1, static_cast<size_t>(optimizedSize.width));
     size_t height = std::max<size_t>(1, static_cast<size_t>(optimizedSize.height));
     if (width == _sceneWidth && height == _sceneHeight && _sceneTexture != nil && _sceneContext != nullptr) return;
@@ -1870,6 +1980,43 @@ fragment float4 postFXFragment(VertexOut in [[stage_in]],
     drawGlassLabel(infoChip, 9.0, [NSColor colorWithCalibratedRed:0.02 green:0.03 blue:0.05 alpha:0.62], [NSColor colorWithCalibratedWhite:1.0 alpha:0.2]);
     strokeText(info, NSMakePoint(20, 57), infoAttrs, [NSColor colorWithCalibratedWhite:0.0 alpha:0.9], 0, 0);
     [info drawAtPoint:NSMakePoint(20, 57) withAttributes:infoAttrs];
+
+    auto transition = _game.visualTransition();
+    if (transition.fromStyle != transition.toStyle) {
+        auto styleName = [](VisualStyle style) {
+            switch (style) {
+                case VisualStyle::Invaders: return "Level 1";
+                case VisualStyle::Tempest: return "Level 2";
+                case VisualStyle::Rez: return "Level 3";
+            }
+            return "Level";
+        };
+
+        NSDictionary* transitionAttrs = @{
+            NSFontAttributeName: [NSFont boldSystemFontOfSize:15],
+            NSForegroundColorAttributeName: [NSColor colorWithCalibratedWhite:1.0 alpha:0.9]
+        };
+        NSString* transitionText = [NSString stringWithFormat:@"Transitioning: %s -> %s",
+                                    styleName(transition.fromStyle),
+                                    styleName(transition.toStyle)];
+        NSSize transitionSize = [transitionText sizeWithAttributes:transitionAttrs];
+        NSRect transitionChip = NSMakeRect(NSMidX(bounds) - transitionSize.width * 0.5 - 16,
+                                           14,
+                                           transitionSize.width + 32,
+                                           transitionSize.height + 12);
+        drawGlassLabel(transitionChip,
+                       10.0,
+                       [NSColor colorWithCalibratedRed:0.02 green:0.03 blue:0.05 alpha:0.78],
+                       [NSColor colorWithCalibratedWhite:1.0 alpha:0.28]);
+        strokeText(transitionText,
+                   NSMakePoint(NSMinX(transitionChip) + 16, NSMinY(transitionChip) + 6),
+                   transitionAttrs,
+                   [NSColor colorWithCalibratedWhite:0.0 alpha:0.92],
+                   0,
+                   0);
+        [transitionText drawAtPoint:NSMakePoint(NSMinX(transitionChip) + 16, NSMinY(transitionChip) + 6)
+                     withAttributes:transitionAttrs];
+    }
 }
 
 - (void)drawGlassShards:(CGContextRef)ctx bounds:(NSRect)bounds baseHue:(double)baseHue {
@@ -1877,10 +2024,12 @@ fragment float4 postFXFragment(VertexOut in [[stage_in]],
     double height = bounds.size.height;
     Vec2 center = _game.center();
     double pulse = _game.state().beatPulse;
+    int shardCount = _adaptiveQuality < 0.7 ? 6 : (_adaptiveQuality < 0.88 ? 8 : 10);
+    int leadCount = _adaptiveQuality < 0.72 ? 5 : 9;
 
     CGContextSaveGState(ctx);
     CGContextSetBlendMode(ctx, kCGBlendModeScreen);
-    for (int i = 0; i < 10; ++i) {
+    for (int i = 0; i < shardCount; ++i) {
         double rainbowT = (baseHue / 360.0) + i * 0.14 + _game.state().elapsed * 0.065 + (i % 2 ? 0.08 : -0.05);
         Color glass = rainbowColor(rainbowT, 0.18 + (i % 3) * 0.07 + pulse * 0.025);
         double wobble = std::sin(_game.state().elapsed * 0.45 + i * 0.8) * (0.18 + pulse * 0.06);
@@ -1897,7 +2046,7 @@ fragment float4 postFXFragment(VertexOut in [[stage_in]],
 
     CGContextSaveGState(ctx);
     CGContextSetBlendMode(ctx, kCGBlendModeMultiply);
-    for (int i = 0; i < 9; ++i) {
+    for (int i = 0; i < leadCount; ++i) {
         std::vector<Vec2> lead = {
             polarPoint(center, std::min(width, height) * 0.1, i * 0.58 + _game.state().elapsed * 0.02),
             polarPoint(center, std::max(width, height) * 0.7, i * 0.58 + 0.18)
@@ -1916,6 +2065,8 @@ fragment float4 postFXFragment(VertexOut in [[stage_in]],
     double width = bounds.size.width;
     double height = bounds.size.height;
     double pulse = _game.state().beatPulse;
+    int beamCount = _adaptiveQuality < 0.72 ? 4 : 6;
+    int rayCount = _adaptiveQuality < 0.72 ? 3 : 4;
 
     CGContextSaveGState(ctx);
     CGContextSetBlendMode(ctx, kCGBlendModeScreen);
@@ -1924,8 +2075,8 @@ fragment float4 postFXFragment(VertexOut in [[stage_in]],
     drawRadialGradient(ctx, {center.x, center.y - height * 0.18}, std::min(width, height) * 0.72, rainbowColor(baseHue / 360.0 + 0.33, 0.28 + pulse * 0.04), rainbowColor(baseHue / 360.0 + 0.33, 0.0));
     drawRadialGradient(ctx, {center.x + width * 0.14, center.y + height * 0.08}, std::min(width, height) * 0.64, rainbowColor(baseHue / 360.0 + 0.66, 0.26 + pulse * 0.04), rainbowColor(baseHue / 360.0 + 0.66, 0.0));
 
-    for (int i = 0; i < 6; ++i) {
-        double spread = lerp(-0.52, 0.52, i / 5.0);
+    for (int i = 0; i < beamCount; ++i) {
+        double spread = lerp(-0.52, 0.52, beamCount > 1 ? static_cast<double>(i) / static_cast<double>(beamCount - 1) : 0.0);
         Vec2 origin{width * (0.08 + 0.14 * i), -height * 0.05};
         Vec2 a = polarPoint(center, std::max(width, height) * (0.14 + pulse * 0.03), -kPi / 2.0 + spread - 0.11);
         Vec2 b = polarPoint(center, std::max(width, height) * (0.58 + pulse * 0.06), -kPi / 2.0 + spread + 0.06);
@@ -1934,7 +2085,7 @@ fragment float4 postFXFragment(VertexOut in [[stage_in]],
         fillPolygon(ctx, beam, toNSColor(beamColor));
     }
 
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < rayCount; ++i) {
         Color ray = rainbowColor(baseHue / 360.0 + 0.2 + i * 0.18, 0.16 + pulse * 0.04);
         CGContextSetShadowWithColor(ctx, CGSizeZero, 40.0, toNSColor(withAlpha(ray, 0.82)).CGColor);
         CGContextSetStrokeColorWithColor(ctx, toNSColor(ray).CGColor);
@@ -1968,6 +2119,14 @@ fragment float4 postFXFragment(VertexOut in [[stage_in]],
     double fromHue = styleHue(transition.fromStyle) + state.elapsed * styleSpeed(transition.fromStyle);
     double toHue = styleHue(transition.toStyle) + state.elapsed * styleSpeed(transition.toStyle);
     double baseHue = std::fmod(lerp(fromHue, toHue, mix), 360.0);
+    double transitionEmphasis = transition.fromStyle != transition.toStyle ? std::sin(mix * kPi) : 0.0;
+    double beatPhase = juce::jlimit(0.0, 1.0, state.beatTime / std::max(0.0001, state.beatInterval));
+    double beatWave = std::sin(beatPhase * kPi);
+    double barAccent = (state.beatStep == 0 || state.beatStep == 4) ? 1.0 : 0.0;
+    double barLift = barAccent * (0.55 + state.beatPulse * 0.35);
+    int invaderBandCount = _adaptiveQuality < 0.72 ? 5 : 7;
+    int tempestLineCount = _adaptiveQuality < 0.72 ? 10 : 16;
+    double rezRingStep = _adaptiveQuality < 0.72 ? 82.0 : 58.0;
 
     drawLinearGradient(ctx, {0.0, 0.0}, {width, height},
                        rainbowColor(baseHue / 360.0 + 0.0, 0.32),
@@ -1981,6 +2140,18 @@ fragment float4 postFXFragment(VertexOut in [[stage_in]],
     drawRadialGradient(ctx, {center.x - width * 0.18, center.y + height * 0.12}, std::min(width, height) * 0.58,
                        rainbowColor(baseHue / 360.0 + 0.52, 0.36 + state.beatPulse * 0.05),
                        rainbowColor(baseHue / 360.0 + 0.52, 0.0));
+    if (transitionEmphasis > 0.0) {
+        drawRadialGradient(ctx,
+                           center,
+                           std::min(width, height) * (0.46 + transitionEmphasis * 0.22),
+                           rainbowColor(baseHue / 360.0 + mix * 0.5, 0.2 + transitionEmphasis * 0.22),
+                           rainbowColor(baseHue / 360.0 + mix * 0.5, 0.0));
+        drawLinearGradient(ctx,
+                           {0.0, center.y - height * 0.08},
+                           {width, center.y + height * 0.08},
+                           rainbowColor(baseHue / 360.0 + 0.16, 0.0),
+                           rainbowColor(baseHue / 360.0 + 0.66, 0.18 + transitionEmphasis * 0.12));
+    }
 
     [self drawGlassShards:ctx bounds:bounds baseHue:baseHue];
     [self drawVolumetricLighting:ctx bounds:bounds hue:baseHue];
@@ -1989,35 +2160,94 @@ fragment float4 postFXFragment(VertexOut in [[stage_in]],
     CGContextSetBlendMode(ctx, kCGBlendModeScreen);
     if (transition.fromStyle == VisualStyle::Invaders || transition.toStyle == VisualStyle::Invaders) {
         double weight = (transition.fromStyle == VisualStyle::Invaders ? 1.0 - mix : 0.0) + (transition.toStyle == VisualStyle::Invaders ? mix : 0.0);
+        weight *= 0.88 + transitionEmphasis * 0.22;
         weight = std::min(1.0, weight * 1.25 + (state.visualStyle == VisualStyle::Invaders ? 0.12 : 0.0));
-        for (int i = 0; i < 7; ++i) {
-            double y = 64 + i * 50;
-            Color band = rainbowColor(baseHue / 360.0 + i * 0.14 + state.elapsed * 0.03, (0.28 + state.beatPulse * 0.07) * weight);
-            fillRect(NSMakeRect(0, y, width, 24 + state.beatPulse * 3.0), toNSColor(band));
-            fillRect(NSMakeRect(0, y + 6.0, width, 6.0 + state.beatPulse * 1.5), toNSColor(rainbowColor(baseHue / 360.0 + 0.22 + i * 0.08, 0.2 * weight)));
+        for (int i = 0; i < invaderBandCount; ++i) {
+            double laneT = invaderBandCount > 1 ? static_cast<double>(i) / static_cast<double>(invaderBandCount - 1) : 0.0;
+            double barMotion = std::sin((state.beatStep + laneT * 1.8) * kPi * 0.5);
+            double xOffset = (barMotion * 18.0 + beatWave * 26.0) * weight;
+            double y = 64 + i * 50 + beatWave * (4.0 + i * 0.35) * weight + barLift * (i % 2 == 0 ? 5.0 : -5.0);
+            double bandHeight = 24 + state.beatPulse * 3.0 + barLift * 2.0;
+            Color band = rainbowColor(baseHue / 360.0 + i * 0.14 + state.elapsed * 0.03 + beatPhase * 0.03, (0.28 + state.beatPulse * 0.07 + barLift * 0.03) * weight);
+            fillRect(NSMakeRect(xOffset - 24.0, y, width + 48.0, bandHeight), toNSColor(band));
+            fillRect(NSMakeRect(-xOffset * 0.65 - 18.0, y + 6.0 + beatWave * 1.5, width + 36.0, 6.0 + state.beatPulse * 1.5 + barLift * 1.2),
+                     toNSColor(rainbowColor(baseHue / 360.0 + 0.22 + i * 0.08 + beatPhase * 0.04, 0.2 * weight)));
+            if (barAccent > 0.0) {
+                fillRect(NSMakeRect(0, y + bandHeight * 0.5 - 1.5, width, 3.0 + state.beatPulse * 0.8),
+                         toNSColor(rainbowColor(baseHue / 360.0 + 0.08 + i * 0.12, 0.11 * weight * barAccent)));
+            }
         }
     }
 
     if (transition.fromStyle == VisualStyle::Tempest || transition.toStyle == VisualStyle::Tempest) {
         double weight = (transition.fromStyle == VisualStyle::Tempest ? 1.0 - mix : 0.0) + (transition.toStyle == VisualStyle::Tempest ? mix : 0.0);
-        for (int i = 0; i < 16; ++i) {
-            double angle = (static_cast<double>(i) / 16.0) * kPi * 2.0 + state.elapsed * 0.05;
-            Color c = rainbowColor(baseHue / 360.0 + i * 0.11 + (i % 3) * 0.05, 0.34 * weight + state.beatPulse * 0.04);
-            CGContextSetShadowWithColor(ctx, CGSizeZero, 22.0, toNSColor(withAlpha(c, 0.86 * weight)).CGColor);
+        weight *= 0.88 + transitionEmphasis * 0.22;
+        double tunnelTwist = state.elapsed * 0.12 + beatWave * 0.14 + barLift * 0.08;
+        double tunnelBreath = 1.0 + beatWave * 0.08 + barLift * 0.06;
+        for (int i = 0; i < tempestLineCount; ++i) {
+            double lineT = static_cast<double>(i) / static_cast<double>(tempestLineCount);
+            double angle = lineT * kPi * 2.0 + state.elapsed * 0.05 + tunnelTwist + std::sin(lineT * kPi * 6.0 + state.elapsed * 0.8) * 0.06 * weight;
+            double innerRadius = _game.ringRadius() * (0.44 + beatWave * 0.09) * tunnelBreath;
+            double outerRadius = _game.outerSpawnRadius() * (0.98 + beatWave * 0.03);
+            Color c = rainbowColor(baseHue / 360.0 + i * 0.11 + (i % 3) * 0.05 + beatPhase * 0.04, 0.34 * weight + state.beatPulse * 0.04 + barLift * 0.03);
+            CGContextSetShadowWithColor(ctx, CGSizeZero, 26.0 + beatWave * 8.0, toNSColor(withAlpha(c, 0.9 * weight)).CGColor);
             CGContextSetStrokeColorWithColor(ctx, toNSColor(c).CGColor);
-            CGContextSetLineWidth(ctx, 2.2 + 1.9 * weight + state.beatPulse * 0.6);
-            CGContextMoveToPoint(ctx, center.x, center.y);
-            CGContextAddLineToPoint(ctx, center.x + std::cos(angle) * _game.outerSpawnRadius(), center.y + std::sin(angle) * _game.outerSpawnRadius());
+            CGContextSetLineWidth(ctx, 2.4 + 2.2 * weight + state.beatPulse * 0.7 + barLift * 0.8);
+            CGContextMoveToPoint(ctx, center.x + std::cos(angle) * innerRadius, center.y + std::sin(angle) * innerRadius);
+            CGContextAddLineToPoint(ctx, center.x + std::cos(angle) * outerRadius, center.y + std::sin(angle) * outerRadius);
             CGContextStrokePath(ctx);
+
+            if (i % 2 == 0) {
+                double crossAngle = angle + 0.18 + beatWave * 0.06;
+                double crossRadius = lerp(_game.ringRadius() * 1.2, _game.outerSpawnRadius() * 0.78, 0.32 + 0.45 * beatPhase);
+                strokeCircle(ctx,
+                             polarPoint(center, crossRadius * tunnelBreath, crossAngle),
+                             5.0 + beatWave * 6.0 + barLift * 4.0,
+                             toNSColor(withAlpha(c, 0.34 * weight)),
+                             1.8 + state.beatPulse * 0.35);
+            }
+        }
+
+        int tunnelRingCount = _adaptiveQuality < 0.72 ? 2 : 4;
+        for (int i = 0; i < tunnelRingCount; ++i) {
+            double ringT = tunnelRingCount > 1 ? static_cast<double>(i) / static_cast<double>(tunnelRingCount - 1) : 0.0;
+            double ringRadius = lerp(_game.ringRadius() * 1.55, _game.outerSpawnRadius() * 0.9, ringT) * (1.0 + beatWave * 0.05);
+            Color ringColor = rainbowColor(baseHue / 360.0 + 0.18 + ringT * 0.3 + beatPhase * 0.05, (0.16 + state.beatPulse * 0.05) * weight);
+            CGContextSetShadowWithColor(ctx, CGSizeZero, 18.0, toNSColor(withAlpha(ringColor, 0.7 * weight)).CGColor);
+            strokeCircle(ctx, center, ringRadius, toNSColor(ringColor), 1.5 + ringT * 2.0 + beatWave * 0.5);
         }
     }
 
     if (transition.fromStyle == VisualStyle::Rez || transition.toStyle == VisualStyle::Rez) {
         double weight = (transition.fromStyle == VisualStyle::Rez ? 1.0 - mix : 0.0) + (transition.toStyle == VisualStyle::Rez ? mix : 0.0);
-        for (double r = 64.0; r < _game.outerSpawnRadius(); r += 58.0) {
-            Color c = rainbowColor(baseHue / 360.0 + r * 0.0028 + state.elapsed * 0.035, 0.34 * weight + state.beatPulse * 0.05);
+        weight *= 0.88 + transitionEmphasis * 0.22;
+        double rezBreath = 1.0 + beatWave * 0.08 + barLift * 0.04;
+        double rezSpin = state.elapsed * 0.18 + beatWave * 0.12;
+        for (double r = 64.0; r < _game.outerSpawnRadius(); r += rezRingStep) {
+            double ringPulse = std::sin(r * 0.028 + state.elapsed * 1.7 + state.beatStep * 0.4) * 0.5 + 0.5;
+            Color c = rainbowColor(baseHue / 360.0 + r * 0.0028 + state.elapsed * 0.035 + ringPulse * 0.04, 0.34 * weight + state.beatPulse * 0.05 + ringPulse * 0.03);
             CGContextSetShadowWithColor(ctx, CGSizeZero, 24.0, toNSColor(withAlpha(c, 0.82 * weight)).CGColor);
-            strokeCircle(ctx, center, r + state.beatPulse * 8.0, toNSColor(c), 2.2 + 3.0 * weight);
+            strokeCircle(ctx, center, (r + state.beatPulse * 8.0 + ringPulse * 10.0) * rezBreath, toNSColor(c), 2.2 + 3.0 * weight + ringPulse * 0.6);
+        }
+
+        int orbitCount = _adaptiveQuality < 0.72 ? 6 : 10;
+        for (int i = 0; i < orbitCount; ++i) {
+            double orbitT = static_cast<double>(i) / static_cast<double>(orbitCount);
+            double angle = orbitT * kPi * 2.0 + rezSpin + std::sin(state.elapsed * 0.9 + i * 0.7) * 0.18;
+            double radius = lerp(_game.ringRadius() * 1.4, _game.outerSpawnRadius() * 0.88, 0.22 + orbitT * 0.68) * rezBreath;
+            Vec2 orbitPos = polarPoint(center, radius, angle);
+            Color orbitColor = rainbowColor(baseHue / 360.0 + orbitT * 0.5 + state.elapsed * 0.05, 0.22 * weight + state.beatPulse * 0.05);
+            fillCircle(ctx, orbitPos, 3.0 + beatWave * 4.0 + orbitT * 2.0, toNSColor(orbitColor));
+            strokeCircle(ctx, orbitPos, 9.0 + beatWave * 10.0, toNSColor(withAlpha(orbitColor, 0.34 * weight)), 1.5 + orbitT * 0.8);
+        }
+
+        int waveCount = _adaptiveQuality < 0.72 ? 2 : 4;
+        for (int i = 0; i < waveCount; ++i) {
+            double waveT = static_cast<double>(i) / static_cast<double>(std::max(1, waveCount - 1));
+            double arcRadius = lerp(_game.ringRadius() * 1.8, _game.outerSpawnRadius() * 0.92, waveT) * (1.0 + beatWave * 0.04);
+            Color arcColor = rainbowColor(baseHue / 360.0 + 0.12 + waveT * 0.4 + state.elapsed * 0.04, (0.14 + state.beatPulse * 0.05) * weight);
+            CGContextSetShadowWithColor(ctx, CGSizeZero, 16.0, toNSColor(withAlpha(arcColor, 0.72 * weight)).CGColor);
+            strokeCircle(ctx, center, arcRadius + std::sin(state.elapsed * 2.2 + i * 1.1) * 10.0, toNSColor(arcColor), 1.6 + beatWave * 0.7);
         }
     }
     CGContextRestoreGState(ctx);
@@ -2030,6 +2260,8 @@ fragment float4 postFXFragment(VertexOut in [[stage_in]],
     auto transition = _game.visualTransition();
     Vec2 center = _game.center();
     double rr = _game.ringRadius();
+    int tempestRingCount = _adaptiveQuality < 0.72 ? 2 : 3;
+    int rezRingCount = _adaptiveQuality < 0.72 ? 3 : 5;
 
     auto styleHue = [&](VisualStyle style) {
         return style == VisualStyle::Invaders ? 332.0 : (style == VisualStyle::Tempest ? 188.0 : 26.0);
@@ -2055,7 +2287,7 @@ fragment float4 postFXFragment(VertexOut in [[stage_in]],
 
     if (transition.fromStyle == VisualStyle::Tempest || transition.toStyle == VisualStyle::Tempest) {
         double weight = (transition.fromStyle == VisualStyle::Tempest ? 1.0 - transition.mix : 0.0) + (transition.toStyle == VisualStyle::Tempest ? transition.mix : 0.0);
-        for (int i = 0; i < 3; ++i) {
+        for (int i = 0; i < tempestRingCount; ++i) {
             Color c = rainbowColor(hue / 360.0 + i * 0.16, 0.52 * weight + state.beatPulse * 0.04);
             CGContextSetShadowWithColor(ctx, CGSizeZero, 26.0, toNSColor(withAlpha(c, 0.92 * weight)).CGColor);
             strokeCircle(ctx, center, rr + i * 14 + state.beatPulse * 6.0, toNSColor(c), std::max(1.7, (i == 0 ? 11.0 : 6.8) * weight));
@@ -2064,7 +2296,7 @@ fragment float4 postFXFragment(VertexOut in [[stage_in]],
 
     if (transition.fromStyle == VisualStyle::Rez || transition.toStyle == VisualStyle::Rez) {
         double weight = (transition.fromStyle == VisualStyle::Rez ? 1.0 - transition.mix : 0.0) + (transition.toStyle == VisualStyle::Rez ? transition.mix : 0.0);
-        for (int i = 0; i < 5; ++i) {
+        for (int i = 0; i < rezRingCount; ++i) {
             Color c = rainbowColor(hue / 360.0 + 0.08 + i * 0.13 + state.elapsed * 0.03, 0.48 * weight + state.beatPulse * 0.05);
             CGContextSetShadowWithColor(ctx, CGSizeZero, 28.0, toNSColor(withAlpha(c, 0.92 * weight)).CGColor);
             strokeCircle(ctx, center, rr + i * 9 + state.beatPulse * 13.0, toNSColor(c), std::max(1.5, (i == 0 ? 7.0 : 4.4) * weight));
@@ -2314,6 +2546,9 @@ fragment float4 postFXFragment(VertexOut in [[stage_in]],
     CFTimeInterval now = CACurrentMediaTime();
     double dt = std::min(0.033, now - _lastTime);
     _lastTime = now;
+    _smoothedFrameTime = lerp(_smoothedFrameTime, dt, 0.08);
+    if (_smoothedFrameTime > (1.0 / 50.0)) _adaptiveQuality = std::max(0.58, _adaptiveQuality - 0.025);
+    else if (_smoothedFrameTime < (1.0 / 57.0)) _adaptiveQuality = std::min(1.0, _adaptiveQuality + 0.012);
 
     [self ensureSceneResourcesForDrawableSize:view.drawableSize];
 
@@ -2337,6 +2572,7 @@ fragment float4 postFXFragment(VertexOut in [[stage_in]],
         float aberration;
         float distortion;
         float beatPulse;
+        float quality;
     } uniforms;
 
     uniforms.resolution = simd_make_float2(static_cast<float>(_sceneWidth), static_cast<float>(_sceneHeight));
@@ -2345,6 +2581,7 @@ fragment float4 postFXFragment(VertexOut in [[stage_in]],
     uniforms.aberration = _game.state().visualStyle == VisualStyle::Rez ? 3.4f : 2.3f;
     uniforms.distortion = _game.state().visualStyle == VisualStyle::Tempest ? 0.016f : (_game.state().visualStyle == VisualStyle::Rez ? 0.013f : 0.010f);
     uniforms.beatPulse = static_cast<float>(_game.state().beatPulse);
+    uniforms.quality = static_cast<float>(_adaptiveQuality);
 
     [encoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:0];
     [encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4];
@@ -2403,7 +2640,7 @@ fragment float4 postFXFragment(VertexOut in [[stage_in]],
     }
 
     if ([_owner showStartForOverlay]) {
-        [_owner drawOverlayInBounds:bounds title:@"Note Defence" subtitle:@"Hit the right key. Survive three arcade phases." footer:@"Press Enter or click to start"];
+        [_owner drawOverlayInBounds:bounds title:@"Note Defence" subtitle:@"Hit the right note. Survive." footer:@"Press Enter or click to start"];
     } else if ([_owner showGameOverForOverlay]) {
         NSString* subtitle = [NSString stringWithFormat:@"Final score: %d", [_owner scoreForOverlay]];
         [_owner drawOverlayInBounds:bounds title:@"Game Over" subtitle:subtitle footer:@"Press R, Enter, or click to play again"];
