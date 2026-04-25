@@ -2470,33 +2470,52 @@ fragment float4 postFXFragment(VertexOut in [[stage_in]],
     NSRect card = NSInsetRect(bounds, std::max(24.0, bounds.size.width * 0.18), std::max(48.0, bounds.size.height * 0.22));
     double t = _game.state().elapsed;
     double pulse = 0.5 + 0.5 * std::sin(t * 2.4);
+    double arcadePulse = 0.5 + 0.5 * std::sin(t * 6.2);
+    double attractFlash = 0.5 + 0.5 * std::sin(t * 12.0);
 
     CGContextRef ctx = NSGraphicsContext.currentContext.CGContext;
     CGContextSaveGState(ctx);
     CGContextSetBlendMode(ctx, kCGBlendModeScreen);
-    drawRadialGradient(ctx, {NSMidX(card), NSMidY(card)}, card.size.width * 0.55, rainbowColor(0.92 + t * 0.04, 0.26 + pulse * 0.08), rainbowColor(0.92 + t * 0.04, 0.0));
-    drawRadialGradient(ctx, {NSMidX(card) - card.size.width * 0.18, NSMidY(card) + card.size.height * 0.1}, card.size.width * 0.42, rainbowColor(0.55 + t * 0.03, 0.2 + pulse * 0.06), rainbowColor(0.55 + t * 0.03, 0.0));
-    for (int i = 0; i < 6; ++i) {
-        double y = card.origin.y + 28.0 + i * (card.size.height - 56.0) / 5.0;
-        Color stripe = rainbowColor(0.9 + i * 0.12 + t * 0.05, 0.14 + pulse * 0.03);
-        fillRect(NSMakeRect(card.origin.x + 18.0, y, card.size.width - 36.0, 10.0 + pulse * 2.0), toNSColor(stripe));
+    drawRadialGradient(ctx, {NSMidX(card), NSMidY(card)}, card.size.width * 0.72, rainbowColor(0.92 + t * 0.04, 0.42 + pulse * 0.16), rainbowColor(0.92 + t * 0.04, 0.0));
+    drawRadialGradient(ctx, {NSMidX(card) - card.size.width * 0.22, NSMidY(card) + card.size.height * 0.12}, card.size.width * 0.56, rainbowColor(0.55 + t * 0.03, 0.34 + pulse * 0.12), rainbowColor(0.55 + t * 0.03, 0.0));
+    drawRadialGradient(ctx, {NSMidX(card) + card.size.width * 0.2, NSMidY(card) - card.size.height * 0.16}, card.size.width * 0.46, rainbowColor(0.2 + t * 0.05, 0.28 + arcadePulse * 0.12), rainbowColor(0.2 + t * 0.05, 0.0));
+    for (int i = 0; i < 9; ++i) {
+        double y = card.origin.y + 22.0 + i * (card.size.height - 44.0) / 8.0;
+        double wobble = std::sin(t * 3.5 + i * 0.9) * 26.0;
+        Color stripe = rainbowColor(0.9 + i * 0.12 + t * 0.05, 0.22 + pulse * 0.06);
+        fillRect(NSMakeRect(card.origin.x + 18.0 + wobble, y, card.size.width - 36.0 - wobble * 2.0, 11.0 + pulse * 3.2 + arcadePulse * 1.8), toNSColor(stripe));
+    }
+    for (int i = 0; i < 14; ++i) {
+        double x = card.origin.x + 26.0 + std::fmod(t * 220.0 + i * 83.0, card.size.width - 52.0);
+        double y = card.origin.y + 18.0 + std::fmod(t * 140.0 + i * 41.0, card.size.height - 36.0);
+        Color spark = rainbowColor(0.08 * i + t * 0.18, 0.22 + attractFlash * 0.14);
+        fillCircle(ctx, {x, y}, 2.0 + arcadePulse * 3.0, toNSColor(spark));
+        strokeCircle(ctx, {x, y}, 7.0 + arcadePulse * 6.0, toNSColor(withAlpha(spark, 0.3)), 1.4);
     }
     CGContextRestoreGState(ctx);
 
     NSBezierPath* path = [NSBezierPath bezierPathWithRoundedRect:card xRadius:12 yRadius:12];
-    [[NSColor colorWithCalibratedRed:0.03 green:0.035 blue:0.05 alpha:0.9] setFill];
+    [[NSColor colorWithCalibratedRed:0.025 green:0.02 blue:0.045 alpha:0.9] setFill];
     [path fill];
-    [[NSColor colorWithCalibratedWhite:1.0 alpha:0.92] setStroke];
-    [path setLineWidth:3.0];
+    [[NSColor colorWithCalibratedWhite:1.0 alpha:0.98] setStroke];
+    [path setLineWidth:4.0];
     [path stroke];
 
     NSBezierPath* innerPath = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(card, 10.0, 10.0) xRadius:10 yRadius:10];
-    [[NSColor colorWithCalibratedWhite:1.0 alpha:0.12] setStroke];
-    [innerPath setLineWidth:1.4];
+    [[NSColor colorWithCalibratedWhite:1.0 alpha:0.18] setStroke];
+    [innerPath setLineWidth:1.8];
     [innerPath stroke];
 
+    for (int i = 0; i < 4; ++i) {
+        double inset = 18.0 + i * 12.0;
+        NSBezierPath* ring = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(card, inset, inset) xRadius:8 yRadius:8];
+        [[toNSColor(rainbowColor(0.12 * i + t * 0.06, 0.22 + arcadePulse * 0.05)) colorWithAlphaComponent:(0.18 + arcadePulse * 0.04)] setStroke];
+        [ring setLineWidth:2.0 - i * 0.25];
+        [ring stroke];
+    }
+
     NSDictionary* titleAttrs = @{
-        NSFontAttributeName: [NSFont boldSystemFontOfSize:std::min(82.0, bounds.size.width * 0.086)],
+        NSFontAttributeName: [NSFont boldSystemFontOfSize:std::min(92.0, bounds.size.width * 0.094)],
         NSForegroundColorAttributeName: NSColor.whiteColor
     };
     NSDictionary* subtitleAttrs = @{
@@ -2510,16 +2529,24 @@ fragment float4 postFXFragment(VertexOut in [[stage_in]],
 
     NSSize titleSize = [title sizeWithAttributes:titleAttrs];
     NSPoint titlePoint = NSMakePoint(NSMidX(card) - titleSize.width * 0.5, NSMinY(card) + 46);
-    drawRadialGradient(ctx, {NSMidX(card), titlePoint.y + titleSize.height * 0.55}, titleSize.width * 0.7, rainbowColor(0.14 + t * 0.03, 0.2), rainbowColor(0.14 + t * 0.03, 0.0));
-    strokeText(title, titlePoint, titleAttrs, [NSColor colorWithCalibratedWhite:0.0 alpha:0.96], 0, 0);
+    drawRadialGradient(ctx, {NSMidX(card), titlePoint.y + titleSize.height * 0.55}, titleSize.width * 0.95, rainbowColor(0.14 + t * 0.03, 0.34 + attractFlash * 0.12), rainbowColor(0.14 + t * 0.03, 0.0));
+    for (int i = 0; i < 4; ++i) {
+        strokeText(title,
+                   NSMakePoint(titlePoint.x, titlePoint.y),
+                   titleAttrs,
+                   toNSColor(rainbowColor(0.12 * i + t * 0.05, 0.38)),
+                   std::cos(t * 3.0 + i * 0.7) * (4.0 - i),
+                   std::sin(t * 2.6 + i * 0.9) * (2.0 - i * 0.25));
+    }
+    strokeText(title, titlePoint, titleAttrs, [NSColor colorWithCalibratedWhite:0.0 alpha:0.98], 0, 0);
     [title drawAtPoint:titlePoint withAttributes:titleAttrs];
 
     NSSize subtitleSize = [subtitle sizeWithAttributes:subtitleAttrs];
     NSPoint subtitlePoint = NSMakePoint(NSMidX(card) - subtitleSize.width * 0.5, NSMinY(card) + 46 + titleSize.height + 20);
     drawGlassLabel(NSInsetRect(NSMakeRect(subtitlePoint.x, subtitlePoint.y, subtitleSize.width, subtitleSize.height), -10, -6),
                    8.0,
-                   [NSColor colorWithCalibratedRed:0.02 green:0.03 blue:0.05 alpha:0.58],
-                   [NSColor colorWithCalibratedWhite:1.0 alpha:0.18]);
+                   [NSColor colorWithCalibratedRed:0.02 green:0.03 blue:0.05 alpha:0.72],
+                   toNSColor(rainbowColor(0.62 + t * 0.04, 0.34)));
     strokeText(subtitle, subtitlePoint, subtitleAttrs, [NSColor colorWithCalibratedWhite:0.0 alpha:0.92], 0, 0);
     [subtitle drawAtPoint:subtitlePoint withAttributes:subtitleAttrs];
 
@@ -2527,10 +2554,24 @@ fragment float4 postFXFragment(VertexOut in [[stage_in]],
     NSPoint footerPoint = NSMakePoint(NSMidX(card) - footerSize.width * 0.5, NSMaxY(card) - footerSize.height - 46);
     drawGlassLabel(NSInsetRect(NSMakeRect(footerPoint.x, footerPoint.y, footerSize.width, footerSize.height), -10, -6),
                    8.0,
-                   [NSColor colorWithCalibratedRed:0.02 green:0.03 blue:0.05 alpha:0.52],
-                   [NSColor colorWithCalibratedWhite:1.0 alpha:0.18]);
+                   [NSColor colorWithCalibratedRed:0.02 green:0.03 blue:0.05 alpha:0.84],
+                   toNSColor(rainbowColor(0.18 + t * 0.05, 0.42 + attractFlash * 0.1)));
     strokeText(footer, footerPoint, footerAttrs, [NSColor colorWithCalibratedWhite:0.0 alpha:0.92], 0, 0);
     [footer drawAtPoint:footerPoint withAttributes:footerAttrs];
+
+    NSDictionary* coinAttrs = @{
+        NSFontAttributeName: [NSFont boldSystemFontOfSize:18],
+        NSForegroundColorAttributeName: [NSColor colorWithCalibratedWhite:1.0 alpha:0.95]
+    };
+    NSString* coinText = @"ARCADE MODE READY";
+    NSSize coinSize = [coinText sizeWithAttributes:coinAttrs];
+    NSPoint coinPoint = NSMakePoint(NSMidX(card) - coinSize.width * 0.5, NSMaxY(card) - 92.0);
+    drawGlassLabel(NSInsetRect(NSMakeRect(coinPoint.x, coinPoint.y, coinSize.width, coinSize.height), -14, -7),
+                   8.0,
+                   [NSColor colorWithCalibratedRed:0.05 green:0.02 blue:0.07 alpha:0.88],
+                   toNSColor(rainbowColor(0.84 + t * 0.07, 0.52 + arcadePulse * 0.1)));
+    strokeText(coinText, coinPoint, coinAttrs, [NSColor colorWithCalibratedWhite:0.0 alpha:0.94], 0, 0);
+    [coinText drawAtPoint:coinPoint withAttributes:coinAttrs];
 }
 
 - (void)mtkView:(MTKView*)view drawableSizeWillChange:(CGSize)size {
